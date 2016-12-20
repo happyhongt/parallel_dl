@@ -24,6 +24,9 @@ opt.save = opt.save..'/n_'..opt.num_of_nodes
 --opt.epoch_step = opt.num_of_nodes*opt.epoch_step --we mult the epoch_step to acount for multiple nodes.
 print(opt)
 
+--make sure all experiments have the same init weights.
+torch.manualSeed(8765467)
+
 do -- data augmentation module
   local BatchFlip,parent = torch.class('nn.BatchFlip', 'nn.Module')
 
@@ -186,8 +189,8 @@ function train()
     -- remove last element so that all the batches have equal size
     indices[#indices] = nil
   
-    for t,v in ipairs(indices) do
-      xlua.progress(t, (#indices)*opt.num_of_nodes)
+    for t,v in ipairs(indices) do --epoch
+      xlua.progress((round - 1)*opt.num_of_nodes + t, (#indices)*opt.num_of_nodes)
 
       local inputs = provider.trainData.data:index(1,v)
       targets:copy(provider.trainData.labels:index(1,v))
