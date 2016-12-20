@@ -132,15 +132,8 @@ function optim.seboost(opfunc, x, config, state)
   
 
   if (isMergeIter == false or config.numNodes == 1) then
-    --print ('x before opt = ')
-    --print(x)
-    
     config.optConfig[state.currNode] = config.optConfig[state.currNode] or copy2(config.initState)
 		x,fx = config.optMethod(opfunc, x, config.optConfig[state.currNode])
-    
-    --print ('x after opt = ')
-    --print(x)
-    --print ('--------------------------------')
 		return x,fx
 	end
 
