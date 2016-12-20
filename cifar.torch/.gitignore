@@ -1,0 +1,5 @@
+cifar-10-batches-t7*
+cifar-10-torch.tar.gz
+provider.t7
+logs/
+logs/*
