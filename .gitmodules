@@ -1,3 +1,0 @@
-[submodule "cifar.torch"]
-	path = cifar.torch
-	url = /home/shai/torch/parallel_sesop/cifar.torch
