@@ -1,3 +1,11 @@
+
+function copy2(obj)
+  if type(obj) ~= 'table' then return obj end
+  local res = setmetatable({}, getmetatable(obj))
+  for k, v in pairs(obj) do res[copy2(k)] = copy2(v) end
+  return res
+end
+
 --[[ A implementation of seboost
 
 ARGS:
@@ -105,7 +113,7 @@ function optim.seboost(opfunc, x, config, state)
   ]]
 	--node switch
   if (config.numNodes > 1 and state.itr % (config.nodeIters + 1) == 0) then
-    print ('In node switch '.. state.itr)
+    --print ('In node switch '.. state.itr)
 		--a node has finished. Save its last x location
 		state.lastNodeXs[state.currNode] = state.lastNodeXs[state.currNode] or x:clone()
     state.lastNodeXs[state.currNode]:copy(x)
@@ -126,8 +134,10 @@ function optim.seboost(opfunc, x, config, state)
   if (isMergeIter == false or config.numNodes == 1) then
     --print ('x before opt = ')
     --print(x)
-    config.optConfig[state.currNode] = config.optConfig[state.currNode] or {}
+    
+    config.optConfig[state.currNode] = config.optConfig[state.currNode] or copy2(config.initState)
 		x,fx = config.optMethod(opfunc, x, config.optConfig[state.currNode])
+    
     --print ('x after opt = ')
     --print(x)
     --print ('--------------------------------')
@@ -138,8 +148,8 @@ function optim.seboost(opfunc, x, config, state)
   ------------------------- SESOP Part ----------------------------
   --print ('****************SESOP***********')
   --print ('--------------------------------')
-  state.dirs = torch.zeros(x:size(1), config.numNodes)
-  state.aOpt = torch.zeros(config.numNodes)
+  state.dirs = state.dirs or torch.zeros(x:size(1), config.numNodes)
+  state.aOpt = state.aOpt or torch.zeros(config.numNodes)
   state.aOpt[1] = 1 --we start from taking the first node direction (maybe start from avrage?).
   
   if (isCuda) then
@@ -161,9 +171,11 @@ function optim.seboost(opfunc, x, config, state)
   subT = subT % (sesopData:size(1) - sesopBatchSize) --Calculate the next batch index
   local sesopInputs = sesopData:narrow(1, subT, sesopBatchSize)
   local sesopTargets = sesopLabels:narrow(1, subT, sesopBatchSize)
+  
+  --print(sesopInputs:size())
   if isCuda then
-    sesopInputs = sesopInputs:cuda()
-    sesopTargets = sesopTargets:cuda()
+  --  sesopInputs = sesopInputs:cuda()
+  --  sesopTargets = sesopTargets:cuda()
   end
 
   -- Create inner opfunc for finding a*
