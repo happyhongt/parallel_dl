@@ -24,9 +24,6 @@ opt.save = opt.save..'/n_'..opt.num_of_nodes
 --opt.epoch_step = opt.num_of_nodes*opt.epoch_step --we mult the epoch_step to acount for multiple nodes.
 print(opt)
 
---make sure all experiments have the same init weights.
-torch.manualSeed(8765467)
-
 do -- data augmentation module
   local BatchFlip,parent = torch.class('nn.BatchFlip', 'nn.Module')
 
@@ -72,6 +69,9 @@ local function cast(t)
    end
 end
 
+--make sure all experiments have the same init weights.
+torch.manualSeed(8765467)
+
 print(c.blue '==>' ..' configuring model')
 local model = nn.Sequential()
 model:add(nn.BatchFlip():float())
@@ -86,6 +86,9 @@ if opt.backend == 'cudnn' then
 end
 
 print(model)
+
+--make sure every experiments uses different permutations.
+torch.manualSeed(8765467*opt.num_of_nodes)
 
 print(c.blue '==>' ..' loading data')
 provider = torch.load 'provider.t7'
