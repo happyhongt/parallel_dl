@@ -25,7 +25,6 @@ ARGS:
 - `config.isCuda`            : Whether to train using cuda or cpu
 - `state`  : a table describing the state of the optimizer; after each
              call the state is modified
-- `state.sesopLastX`        : The last point from which the boosting was ran
 - `state.itr`               : The current optimization iteration
 - `state.dirs`              : The set of directions to optimize in
 - `state.anchors`           : The current anchor points
@@ -83,7 +82,6 @@ function optim.seboost(opfunc, x, config, state)
   local sesopData = config.sesopData
   local sesopLabels = config.sesopLabels
   local sesopBatchSize = config.sesopBatchSize or 100
-  state.sesopLastX = state.sesopLastX or x:clone() --Never forget to clone!
   state.itr = state.itr or 0
   
 
