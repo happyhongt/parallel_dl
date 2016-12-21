@@ -21,7 +21,7 @@ opt = lapp[[
 ]]
 
 opt.save = opt.save..'/n_'..opt.num_of_nodes
---opt.epoch_step = opt.num_of_nodes*opt.epoch_step --we mult the epoch_step to acount for multiple nodes.
+--opt.epoch_step = math.ceil(opt.epoch_step/opt.num_of_nodes) --we mult the epoch_step to acount for multiple nodes.
 print(opt)
 
 do -- data augmentation module
@@ -174,8 +174,12 @@ function train()
   
   -- drop learning rate every "epoch_step" epochs
   if epoch % opt.epoch_step == 0 then 
-    for node = 1, opt.num_of_nodes do
-      sesopConfig.optConfig[node].learningRate = sesopConfig.optConfig[node].learningRate/2 
+    if(opt.num_of_nodes == 1) then
+      optimState.learningRate = optimState.learningRate/2
+    else
+      for node = 1, opt.num_of_nodes do
+        sesopConfig.optConfig[node].learningRate = sesopConfig.optConfig[node].learningRate/2 
+      end
     end
   end
   
