@@ -146,7 +146,7 @@ else --if we use sesop, we dont need any optimState parameters, as they are set 
   }
   
     --print(sesopConfig.initState)
-    for node = 1, opt.num_of_nodes do
+    for node = 0, opt.num_of_nodes - 1 do
       sesopConfig.optConfig[node] = copy2(sesopConfig.initState)
       --sesopConfig.optConfig[node].learningRate = sesopConfig.optConfig[node].learningRate/node
     end
@@ -177,7 +177,7 @@ function train()
     if(opt.num_of_nodes == 1) then
       optimState.learningRate = optimState.learningRate/2
     else
-      for node = 1, opt.num_of_nodes do
+      for node = 0, opt.num_of_nodes - 1 do
         sesopConfig.optConfig[node].learningRate = sesopConfig.optConfig[node].learningRate/2 
       end
     end
