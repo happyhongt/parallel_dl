@@ -21,7 +21,7 @@ opt = lapp[[
 ]]
 
 opt.save = opt.save..'/n_'..opt.num_of_nodes
---opt.epoch_step = math.ceil(opt.epoch_step/opt.num_of_nodes) --we mult the epoch_step to acount for multiple nodes.
+opt.epoch_step = math.ceil(opt.epoch_step/opt.num_of_nodes) --we mult the epoch_step to acount for multiple nodes.
 print(opt)
 
 do -- data augmentation module
@@ -141,7 +141,7 @@ else --if we use sesop, we dont need any optimState parameters, as they are set 
         },
         sesopBatchSize=1000,
         numNodes=opt.num_of_nodes,
-        nodeIters=math.ceil(100/(math.log(opt.num_of_nodes) + 1)),
+        nodeIters=math.ceil(100/(math.log(opt.num_of_nodes, 2))),
         --nodeIters=1
   }
   
@@ -156,13 +156,13 @@ end
 
 
 require 'seboost_parallel_simulation'
-trainLoss = torch.Tensor(opt.max_epoch)
-trainError = torch.Tensor(opt.max_epoch)
-testError = torch.Tensor(opt.max_epoch)
+trainLoss = torch.Tensor(opt.max_epoch + 1)
+trainError = torch.Tensor(opt.max_epoch + 1)
+testError = torch.Tensor(opt.max_epoch + 1)
 
-trainLossFull = torch.Tensor(opt.max_epoch*opt.num_of_nodes)
-trainErrorFull = torch.Tensor(opt.max_epoch*opt.num_of_nodes)
-testErrorFull = torch.Tensor(opt.max_epoch*opt.num_of_nodes)
+trainLossFull = torch.Tensor(opt.max_epoch*opt.num_of_nodes + 1)
+trainErrorFull = torch.Tensor(opt.max_epoch*opt.num_of_nodes + 1)
+testErrorFull = torch.Tensor(opt.max_epoch*opt.num_of_nodes + 1)
 
 
 function train()
@@ -197,7 +197,7 @@ function train()
     indices[#indices] = nil
   
     for t,v in ipairs(indices) do --epoch
-      xlua.progress((round - 1)*opt.num_of_nodes + t, (#indices)*opt.num_of_nodes)
+      xlua.progress((round - 1)*(#indices) + t, (#indices)*opt.num_of_nodes)
 
       local inputs = provider.trainData.data:index(1,v)
       targets:copy(provider.trainData.labels:index(1,v))

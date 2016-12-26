@@ -141,7 +141,8 @@ function optim.seboost(opfunc, x, config, state)
   --print ('--------------------------------')
   state.dirs = state.dirs or torch.zeros(x:size(1), config.numNodes)
   state.aOpt = state.aOpt or torch.zeros(config.numNodes)
-  state.aOpt[1] = 1 --we start from taking the first node direction (maybe start from avrage?).
+  --state.aOpt[1] = 1 --we start from taking the first node direction (maybe start from avrage?).
+  state.aOpt = torch.ones(config.numNodes)*(1/config.numNodes) --avrage
   
   if (isCuda) then
     state.dirs = state.dirs:cuda()
@@ -179,6 +180,7 @@ function optim.seboost(opfunc, x, config, state)
   end
 
   --x,f(x)
+  config.maxIter = config.numNodes
   local _, fHist = optim.cg(feval, state.aOpt, config, state) --Apply optimization using inner function
    
   --updating model weights!
