@@ -1,5 +1,5 @@
 
-function copy2(obj)
+local function copy2(obj)
   if type(obj) ~= 'table' then return obj end
   local res = setmetatable({}, getmetatable(obj))
   for k, v in pairs(obj) do res[copy2(k)] = copy2(v) end
