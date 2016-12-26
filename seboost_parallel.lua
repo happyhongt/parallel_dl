@@ -7,129 +7,71 @@ local function copy2(obj)
 end
 
 
-local unistd = require "posix.unistd"
-local p = require "posix"
 
---[[
-- config.save : path for a directory to save model.nodeId.txt. Every 100 iterations, we save model.nodeId.txt.
-                Then we wait for all other nodes to do the same and touch nodeId.ready.
-                When all nodes are ready, node 0 read the models and perform sesop.
-                Then it writes the result into sesop.out.
-                Rest of nodes poll on sesop.out, when it is ready, they continue. 
-                Node 0 remove *.ready and continue.
-]]
+local ipc = require 'libipc'
+local sys = require 'sys'
+require 'cunn'
 
+do --define server
+  local Master = torch.class('Master')
 
-local function lock_file(filename) 
-  local fd = p.creat(filename, "rw-r--r--")
-    -- Set lock on file
-  local lock = {
-      l_type = p.F_WRLCK;     -- Exclusive lock
-      l_whence = p.SEEK_SET;  -- Relative to beginning of file
-      l_start = 0;            -- Start from 1st byte
-      l_len = 0;              -- Lock whole file
-  }
-  
-  local result = -1
-  while true do
-    local result = p.fcntl(fd, p.F_SETLK, lock)
-    if result ~= -1 then
-      break
+  --n is the number of workers.
+  function Master:__init(x, n)
+    self.server = ipc.server('127.0.0.1', 8080)
+    self.remote_models = {}
+    self.next_free = 0
+    self.n = n
+    
+    for i = 0, n - 1 do
+      self.remote_models[i] = x:clone()
     end
     
-    print("file locked by another process, try again... filename = "..filename)
-    print('result = '..result)
-  end
-  return fd
-end
-
-local function unlock_file(fd) 
-    -- Set lock on file
-  local lock = {
-      l_type = p.F_WRLCK;     -- Exclusive lock
-      l_whence = p.SEEK_SET;  -- Relative to beginning of file
-      l_start = 0;            -- Start from 1st byte
-      l_len = 0;              -- Lock whole file
-  }
-  
-  -- Release the lock
-  lock.l_type = p.F_UNLCK
-  p.fcntl(fd, p.F_SETLK, lock)
-end
-
-
---lock is actually the fd.
---Every process must have its model file locked untill broadcast_model is called.
---broadcast_model then release the lock
---only then the other node will be able to complete poll_model.
-local function broadcast_model(x, nodeId, save, lock)
-  --assert that we have the lock!
-  torch.save(save..'/model.'..nodeId..'.txt', x)
-  unlock_file(lock)
-end
-
---block untill model from nodeId is ready
-local function poll_model(x, nodeId, save)
-  local lock = lock_file(save..'/model.'..nodeId..'.txt')
-  local res = torch.load(save..'/model.'..nodeId..'.txt', x)
-  unlock_file(lock)
-  return res
-end
-
---assume model and done locks are taken for self.
-local function sync(x, config, lock, lockDone)
-  print (config.nodeId..' Sync')
-  if config.nodeId == 0 then --MASTER
-    local remote_models = {}
-    
-    print (config.nodeId..' Waiting for worker nodes to finish their iterations')
-    --poll on all other nodes
-    for i = 1, config.numNodes do
-      remote_models[i] = poll_model(x, i, config.save)
-      print (config.nodeId..' Recived model from node '..i)
-    end
-    
-    print (config.nodeId..' Worker nodes finished, starting merging')
-    x = merge_models(x, config, remote_models)
-    print (config.nodeId..' Done merging, sending updated model')
-    broadcast_model(x, 0, config.save, lock)
-    print (config.nodeId..' Updated model sent, waiting for workers to consume it')
-    --now we need to wait untill all models 
-    --consume this updated model before we continue
-    for i = 1, config.numNodes do
-      --block untill node i is done.
-      unlock_file(lock_file(config.save..'/done.'..i..'.txt'))
-    end
-    
-  else --WORKERS
-    print (config.nodeId..' Worker node sending model')
-    broadcast_model(x, config.nodeId, config.save, lock)
-    x = poll_model(x, 0, config.save)
-    print (config.nodeId.. ' Worker node got merged model back!')
   end
   
-  print (config.nodeId..' Done, releasing done lock')
-  unlock_file(lockDone) --set that we are done
-end
-
-local function merge_models(x, config, remote_models)
-  print (config.nodeId.. ' Merging models...')
-  return x
-end
-
-local function start_divergence(x, config)
-  local lock = lock_file(config.save..'/model.'..config.nodeId..'.txt')
-  --as long as we didnt release lockDone, other nodes will not think we are done.
-  --in other words, this is "set_not_done".
-  local lockDone = lock_file(config.save..'/done.'..config.nodeId..'.txt')
+  --wait to get results from n workers.
+  function Master:block_on_workers()
+    self.next_free = 0
+    self.server:clients(self.n, function(client)
+      --will this run on paralel?? BUG!!!
+      local msg = client:recv(self.remote_models[self.next_free])
+      self.next_free = self.next_free + 1
+    end)
   
-  --Do 100 iterations
-  for i = 1, config.numNodes do
-    print (config.nodeId.. ' Is running iteration '..i)
+  end
+  
+  function Master:broadcast_to_workers(x)
+    self.server:clients(self.n, function(client)
+      client:send(x)
+    end)
+  end
+  
+  function Master:close()
+    self.server:close()
   end
   
   
-  sync(x, config, lock, lockDone)
+  
+  
+  
+  --define worker
+  local Worker = torch.class('Worker')
+  function Worker:__init(id)
+    self.client = ipc.client('127.0.0.1', 8080)
+    self.id = id
+  end
+  
+  function Worker:send_to_master(x)
+    self.client:send(x)
+  end
+  
+  function Worker:recv_from_master(x)
+    self.client:recv(x)
+  end
+  
+  function Worker:close()
+    self.client:close()
+  end
+  
 end
 
 require 'xlua'
@@ -141,13 +83,41 @@ opt = lapp[[
 
 
   
-local config = {
-  save='./tmp',
-  nodeId=opt.id,
-  numNodes=opt.num_of_nodes
-}
-local x = 1
 
-print (config)
+if (opt.id == 0) then
+  local x = torch.randn(3,3):float():cuda()
+  
+  print('master x = ')
+  print(x)
+  
+  master = Master(x, opt.num_of_nodes - 1)
+  
+  master:block_on_workers()
+  
+  print('master remote_models after blocking = ')
+  print(master.remote_models[0])
+  print(master.remote_models[1])
+  
+  master:broadcast_to_workers(x)
+  
+  master:close()
+  
+end
 
-start_divergence(x, config)
+if (opt.id > 0) then
+  local x = torch.randn(3,3):float():cuda()
+  
+  print('worker x = ')
+  print(x)
+  
+  worker = Worker(opt.id)
+  
+  worker:send_to_master(x)
+  
+  worker:recv_from_master(x)
+  print('worker x after broadcast = ')
+  print(x)
+  
+  worker:close()
+end
+
