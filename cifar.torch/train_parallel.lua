@@ -89,8 +89,8 @@ end
 
 print(model)
 
---make sure every experiments uses different permutations.
-torch.manualSeed(8765467*opt.num_of_nodes)
+--make sure every rank uses different permutations.
+torch.manualSeed(8765467*(opt.id + 1))
 
 print(c.blue '==>' ..' loading data')
 provider = torch.load 'provider.t7'
@@ -143,7 +143,7 @@ else --if we use sesop, we dont need any optimState parameters, as they are set 
         
         sesopBatchSize=1000,
         numNodes=opt.num_of_nodes,
-        nodeIters=math.ceil(100/(math.log(opt.num_of_nodes, 2))),
+        nodeIters=math.ceil(130/(math.log(opt.num_of_nodes, 2))),
         --nodeIters=1
   }
     
@@ -158,12 +158,14 @@ require 'cunn'
 
 require 'seboost_parallel'
 
-if (opt.id == 0) then
-  sesopConfig.master = Master(parameters, opt.num_of_nodes - 1)
-end
+if(opt.num_of_nodes > 1) then
+  if (opt.id == 0) then
+    sesopConfig.master = Master(parameters, opt.num_of_nodes - 1)
+  end
 
-if (opt.id > 0) then
-  sesopConfig.worker = Worker(opt.id)
+  if (opt.id > 0) then
+    sesopConfig.worker = Worker(opt.id)
+  end
 end
 
 
@@ -329,9 +331,16 @@ function test()
   confusion:zero()
 end
 
+local timer = torch.Timer()
+
+times = torch.Tensor(opt.max_epoch + 1)
 
 for i=1,opt.max_epoch do
+  timer:reset()
   train()
+  times[i] = timer:time().real
+  torch.save(opt.save..'/epochTimes.txt', times)
+  
   test()
 end
 

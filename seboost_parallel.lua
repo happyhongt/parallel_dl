@@ -172,8 +172,6 @@ function optim.seboost(opfunc, x, config, state)
       
     config.master:broadcast_to_workers(x)
     config.master:broadcast_to_workers(fHist)
-    print ('fHist = ')
-    print(fHist)
     return x,fHist
   end  
 end
