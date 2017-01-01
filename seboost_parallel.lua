@@ -64,8 +64,9 @@ do --define server
     self.client:send(x)
   end
   
+  --blocks
   function Worker:recv_from_master(x)
-    self.client:recv(x)
+    return self.client:recv(x)
   end
   
   function Worker:close()
@@ -74,50 +75,107 @@ do --define server
   
 end
 
-require 'xlua'
 
-opt = lapp[[
-   -n,--num_of_nodes          (default 1)             Number of nodes to simulate.
-   -i,--id          (default 1)             Number of nodes to simulate.
-]]
+function optim.seboost(opfunc, x, config, state)
+
+  -- get/update state
+  local state = state or config
+  local isCuda = config.isCuda or false
+  local sesopData = config.sesopData
+  local sesopLabels = config.sesopLabels
+  local sesopBatchSize = config.sesopBatchSize or 100
+  config.nodeIters = config.nodeIters or 100
+  
+  state.itr = state.itr or 0
+	config.numNodes = config.numNodes or 2  
+  state.sesopIteration = state.sesopIteration or 0
+  state.itr = state.itr + 1
+  
+  if (state.itr % config.nodeIters ~= 0) then
+    x,fx = config.optMethod(opfunc, x, config.optConfig)
+    return x,fx
+  end
+    
+  if (config.master == nil) then
+    --WORKER--
+    --print ('WORKER SESOP begin')
+    config.worker:send_to_master(x)
+    config.worker:recv_from_master(x)
+    local fHist = {}
+    fHist = config.worker:recv_from_master(fHist)
+    return x, fHist
+  end
+
+  if (config.worker == nil) then
+    --MASTER--
+    --print ('MASTER SESOP begin')
+    state.splitPoint = state.splitPoint or x:clone() --the first split point is the first point
+
+    config.master:block_on_workers()
+    --Do SESOP on master.remote_models:
+      
+    state.dirs = state.dirs or torch.zeros(x:size(1), config.numNodes)
+    state.aOpt = state.aOpt or torch.zeros(config.numNodes)
+    --state.aOpt[1] = 1 --we start from taking the first node direction (maybe start from avrage?).
+    state.aOpt = torch.ones(config.numNodes)*(1/config.numNodes) --avrage
+      
+    if (isCuda) then
+      state.dirs = state.dirs:cuda()
+      state.aOpt = state.aOpt:cuda()
+    end
+      
+    state.dirs[{ {}, 1 }]:copy(x - state.splitPoint)
+    --SV, build directions matrix
+    for i = 1, config.numNodes - 1 do   
+      --[{ {}, i }] means: all of the first dim, slice in the second dim at i = get i col.
+      state.dirs[{ {}, i + 1 }]:copy(config.master.remote_models[i - 1] - state.splitPoint)
+    end
 
 
-  
+    --now optimize!
+    local xInit = state.splitPoint
+      -- create mini batch
+    local subT = (state.sesopIteration) * sesopBatchSize + 1
+    subT = subT % (sesopData:size(1) - sesopBatchSize) --Calculate the next batch index
+    local sesopInputs = sesopData:narrow(1, subT, sesopBatchSize)
+    local sesopTargets = sesopLabels:narrow(1, subT, sesopBatchSize)
+    
+    --print(sesopInputs:size())
+    if isCuda then
+    --  sesopInputs = sesopInputs:cuda()
+    --  sesopTargets = sesopTargets:cuda()
+    end
 
-if (opt.id == 0) then
-  local x = torch.randn(3,3):float():cuda()
-  
-  print('master x = ')
-  print(x)
-  
-  master = Master(x, opt.num_of_nodes - 1)
-  
-  master:block_on_workers()
-  
-  print('master remote_models after blocking = ')
-  print(master.remote_models[0])
-  print(master.remote_models[1])
-  
-  master:broadcast_to_workers(x)
-  
-  master:close()
-  
+    -- Create inner opfunc for finding a*
+    local feval = function(a)
+      --A function of the coefficients
+      local dirMat = state.dirs
+      --Note that opfunc also gets the batch
+      local afx, adfdx = opfunc(xInit + dirMat*a, sesopInputs, sesopTargets)
+      return afx, (dirMat:t()*adfdx)
+    end
+    --x,f(x)
+    config.maxIter = config.numNodes
+    local _, fHist = optim.cg(feval, state.aOpt, config, state) --Apply optimization using inner function
+       
+    --updating model weights!
+    x:copy(xInit)
+    local sesopDir = state.dirs*state.aOpt 
+    x:add(sesopDir)
+      
+    --the new split point is 'x'.
+    --The next time this function is called will be with 'x'.
+    --The next time we will change a node, it will get this 'x'.
+    state.splitPoint:copy(x)
+      
+    state.sesopIteration = state.sesopIteration + 1
+      
+    config.master:broadcast_to_workers(x)
+    config.master:broadcast_to_workers(fHist)
+    print ('fHist = ')
+    print(fHist)
+    return x,fHist
+  end  
 end
-
-if (opt.id > 0) then
-  local x = torch.randn(3,3):float():cuda()
   
-  print('worker x = ')
-  print(x)
-  
-  worker = Worker(opt.id)
-  
-  worker:send_to_master(x)
-  
-  worker:recv_from_master(x)
-  print('worker x after broadcast = ')
-  print(x)
-  
-  worker:close()
-end
 
