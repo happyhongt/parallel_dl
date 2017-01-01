@@ -113,17 +113,20 @@ function optim.seboost(opfunc, x, config, state)
 
     config.master:block_on_workers()
     --Do SESOP on master.remote_models:
-      
-    state.dirs = state.dirs or torch.zeros(x:size(1), config.numNodes)
-    state.aOpt = state.aOpt or torch.zeros(config.numNodes)
-    --state.aOpt[1] = 1 --we start from taking the first node direction (maybe start from avrage?).
-    state.aOpt = torch.ones(config.numNodes)*(1/config.numNodes) --avrage
-      
-    if (isCuda) then
-      state.dirs = state.dirs:cuda()
-      state.aOpt = state.aOpt:cuda()
+    
+    if (state.dirs == nil) then
+      --if it is the first time
+      state.dirs = torch.zeros(x:size(1), config.numNodes)
+      state.aOpt = torch.zeros(config.numNodes)
+      --state.aOpt[1] = 1 --we start from taking the first node direction (maybe start from avrage?).
+        
+      if (isCuda) then
+        state.dirs = state.dirs:cuda()
+        state.aOpt = state.aOpt:cuda()
+      end
     end
-      
+    
+    state.aOpt:copy(torch.ones(config.numNodes)*(1/config.numNodes)) --avrage
     state.dirs[{ {}, 1 }]:copy(x - state.splitPoint)
     --SV, build directions matrix
     for i = 1, config.numNodes - 1 do   

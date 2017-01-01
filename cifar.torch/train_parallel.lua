@@ -143,7 +143,8 @@ else --if we use sesop, we dont need any optimState parameters, as they are set 
         
         sesopBatchSize=1000,
         numNodes=opt.num_of_nodes,
-        nodeIters=math.ceil(130/(math.log(opt.num_of_nodes, 2))),
+        --nodeIters=math.ceil(130/(math.log(opt.num_of_nodes, 2))),
+        nodeIters=100
         --nodeIters=1
   }
     
