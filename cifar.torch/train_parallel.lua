@@ -143,8 +143,8 @@ else --if we use sesop, we dont need any optimState parameters, as they are set 
         
         sesopBatchSize=1000,
         numNodes=opt.num_of_nodes,
-        --nodeIters=math.ceil(130/(math.log(opt.num_of_nodes, 2))),
-        nodeIters=100
+        nodeIters=math.ceil(130/(math.log(opt.num_of_nodes, 2))),
+        --nodeIters=100
         --nodeIters=1
   }
     
@@ -168,7 +168,6 @@ if(opt.num_of_nodes > 1) then
     sesopConfig.worker = Worker(opt.id)
   end
 end
-
 
 
 trainLoss = torch.Tensor(opt.max_epoch + 1)
