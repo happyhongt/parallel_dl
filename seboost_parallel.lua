@@ -16,8 +16,8 @@ do --define server
   local Master = torch.class('Master')
 
   --n is the number of workers.
-  function Master:__init(x, n)
-    self.server = ipc.server('127.0.0.1', 8080)
+  function Master:__init(x, n, port)
+    self.server = ipc.server('127.0.0.1', port)
     self.remote_models = {}
     self.next_free = 0
     self.n = n
@@ -55,8 +55,8 @@ do --define server
   
   --define worker
   local Worker = torch.class('Worker')
-  function Worker:__init(id)
-    self.client = ipc.client('127.0.0.1', 8080)
+  function Worker:__init(id, port)
+    self.client = ipc.client('127.0.0.1', port)
     self.id = id
   end
   

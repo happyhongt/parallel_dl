@@ -19,11 +19,28 @@ opt = lapp[[
    --type                     (default cuda)          cuda/float/cl
    -n,--num_of_nodes          (default 1)             Number of nodes to run.
    -i,--id          (default 0)             id of the node.
+   -f, --merge_freq          (default 130)             SESOP frequancy.
+   --sesop_batch_size    (default 1000)            SESOP base batch size.
+   --port                (default 8080)            port for communication between solvers.
+   --optimizer           (sgd)            internal optimizer fuinction.
+   
 ]]
 
+optimizer = optim.sgd
+if (opt.optimizer == 'adagrad') then
+  optimizer = optim.adagrad
+end
+if (opt.optimizer == 'adam') then
+  optimizer = optim.adam
+end
+if (opt.optimizer == 'adadelta') then
+  optimizer = optim.adadelta
+end
 
-opt.save = opt.save..'/n_'..opt.num_of_nodes..'/id_'..opt.id
-opt.epoch_step = math.ceil(opt.epoch_step/opt.num_of_nodes) --we mult the epoch_step to acount for multiple nodes.
+
+--opt.save = opt.save..'/n_'..opt.num_of_nodes..'_lrd_'..opt.epoch_step..'/id_'..opt.id
+--opt.epoch_step = math.ceil(opt.epoch_step/opt.num_of_nodes) --we mult the epoch_step to acount for multiple nodes.
+
 print(opt)
 
 do -- data augmentation module
@@ -130,7 +147,7 @@ else --if we use sesop, we dont need any optimState parameters, as they are set 
   optimState = { }
   sesopConfig = {
         --optMethod=optim.adadelta, 
-        optMethod=optim.sgd, 
+        optMethod=optimizer, 
         sesopData=provider.trainData.data,
         sesopLabels=provider.trainData.labels,
         isCuda=true,
@@ -141,9 +158,10 @@ else --if we use sesop, we dont need any optimState parameters, as they are set 
           learningRateDecay = opt.learningRateDecay,
         }, --placeholder state for the inner optimization function.
         
-        sesopBatchSize=1000,
+        sesopBatchSize=sesop_batch_size,
         numNodes=opt.num_of_nodes,
-        nodeIters=math.ceil(130/(math.log(opt.num_of_nodes, 2))),
+        --nodeIters=math.ceil(130/(math.log(opt.num_of_nodes, 2))),
+        nodeIters=opt.merge_freq
         --nodeIters=100
         --nodeIters=1
   }
@@ -161,11 +179,11 @@ require 'seboost_parallel'
 
 if(opt.num_of_nodes > 1) then
   if (opt.id == 0) then
-    sesopConfig.master = Master(parameters, opt.num_of_nodes - 1)
+    sesopConfig.master = Master(parameters, opt.num_of_nodes - 1, opt.port)
   end
 
   if (opt.id > 0) then
-    sesopConfig.worker = Worker(opt.id)
+    sesopConfig.worker = Worker(opt.id, opt.port)
   end
 end
 
@@ -174,14 +192,14 @@ trainLoss = torch.Tensor(opt.max_epoch + 1)
 trainError = torch.Tensor(opt.max_epoch + 1)
 testError = torch.Tensor(opt.max_epoch + 1)
 
-trainLossFull = torch.Tensor(opt.max_epoch*opt.num_of_nodes + 1)
-trainErrorFull = torch.Tensor(opt.max_epoch*opt.num_of_nodes + 1)
-testErrorFull = torch.Tensor(opt.max_epoch*opt.num_of_nodes + 1)
+local numOfIterations = math.ceil((provider.trainData.data:size(1)/opt.batchSize)*opt.max_epoch)
+trainLossFull = torch.Tensor(numOfIterations)
 
 
 function train()
   model:training()
   epoch = epoch or 1
+  iter = iter or 1
   trainLoss[epoch] = 0
   trainError[epoch] = 0
   
@@ -201,59 +219,62 @@ function train()
   local targets = cast(torch.FloatTensor(opt.batchSize))
   local indices = nil
   local tic = torch.tic()
-  --train opt.num_of_nodes epochs to simulate parallel execution.
-  for round = 1, 1 do
-    --every node chooses its own permutation
-    indices = torch.randperm(provider.trainData.data:size(1)):long():split(opt.batchSize)
-    -- remove last element so that all the batches have equal size
-    indices[#indices] = nil
   
-    for t,v in ipairs(indices) do --epoch
-      xlua.progress((round - 1)*(#indices) + t, (#indices)*1)
+  --every node chooses its own permutation
+  indices = torch.randperm(provider.trainData.data:size(1)):long():split(opt.batchSize)
+  -- remove last element so that all the batches have equal size
+  indices[#indices] = nil
+  
+  for t,v in ipairs(indices) do --epoch
+    xlua.progress(t, #indices)
 
-      local inputs = provider.trainData.data:index(1,v)
-      targets:copy(provider.trainData.labels:index(1,v))
-      --print(inputs:size())
-      local feval = function(x, finputs, ftargets)
-        if x ~= parameters then parameters:copy(x) end
-        gradParameters:zero()
+    local inputs = provider.trainData.data:index(1,v)
+    targets:copy(provider.trainData.labels:index(1,v))
+    --print(inputs:size())
+    local feval = function(x, finputs, ftargets)
+      if x ~= parameters then parameters:copy(x) end
+      gradParameters:zero()
+      
+      local _inputs = finputs or inputs --take inputs in case of sesop and x incase of baseMethod.
+      local _targets = ftargets or targets
         
-        local _inputs = finputs or inputs --take inputs in case of sesop and x incase of baseMethod.
-        local _targets = ftargets or targets
+      local outputs = model:forward(_inputs)
+      local f = criterion:forward(outputs, _targets)
+      
+      --save the full train loss to evaluate SESOP
+      trainLossFull[iter] = f
+      iter = iter + 1
+      
+      trainLoss[epoch] = trainLoss[epoch] + f
+      local df_do = criterion:backward(outputs, _targets)
+      model:backward(_inputs, df_do)
         
-        local outputs = model:forward(_inputs)
-        local f = criterion:forward(outputs, _targets)
-        trainLoss[epoch] = trainLoss[epoch] + f
-        local df_do = criterion:backward(outputs, _targets)
-        model:backward(_inputs, df_do)
-        
-        --we only add the non sesop batches
-        if finputs == nil then
-          confusion:batchAdd(outputs, _targets)
-        end
-
-        return f,gradParameters
+      --we only add the non sesop batches
+      if finputs == nil then
+        confusion:batchAdd(outputs, _targets)
       end
       
-      if(opt.num_of_nodes == 1) then
-        optim.sgd(feval, parameters, optimState)
-      else
-        optim.seboost(feval, parameters, sesopConfig, optimState)
-      end
+      --SV EXPERIMENT! Drop update
+      --torch.cmul(gradParameters, gradParameters, torch.Tensor(gradParameters:size()):random(0,1):cuda())
+      
+      return f,gradParameters
     end
-    
-    confusion:updateValids()
-    trainErrorFull[(epoch - 1)*opt.num_of_nodes + round] = 1 - confusion.totalValid
-    torch.save(opt.save..'/trainErrorFull.txt', trainErrorFull)
+      
+    if(opt.num_of_nodes == 1) then
+        optimizer(feval, parameters, optimState)
+    else
+      optim.seboost(feval, parameters, sesopConfig, optimState)
+    end
   end
-
   
   confusion:updateValids()
-  
-  trainLoss[epoch] =  trainLoss[epoch]/((#indices)*opt.num_of_nodes)
+
+  trainLoss[epoch] =  trainLoss[epoch]/(#indices)
   trainError[epoch] = 1 - confusion.totalValid
   torch.save(opt.save..'/trainLoss.txt', trainLoss)
   torch.save(opt.save..'/trainError.txt', trainError)
+  torch.save(opt.save..'/trainLossFull.txt', trainLossFull)
+  torch.save(opt.save..'/epoch.txt', epoch)
   
   print(('Train accuracy: '..c.cyan'%.2f'..' %%\t time: %.2f s'):format(
         confusion.totalValid * 100, torch.toc(tic)))
